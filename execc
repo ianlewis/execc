@@ -1,0 +1,487 @@
+#!/bin/bash -eu
+#
+# Copyright 2017 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# execc is a simple example of a container runtime. It simply runs
+# a command in a container. It uses the cgcreate, cgexec, cgset, cgdelete,
+# unshare, and chroot commands to initialize the container.
+#
+# The uuidgen, and bc commands are also required.
+#
+# A newer version of unshare that supports --fork, --user, --pid and --mount-proc
+# is recommended.
+
+BASENAME=`basename $0`
+
+set -e
+
+# Require a secific command. Give hints about what package to install.
+command_required() {
+    _COMMAND=$1
+    _APT_PACKAGE=$2
+    _YUM_PACKAGE=$3
+    if [ ! $(command -v $_COMMAND) ]; then
+        echo "$_COMMAND is required."
+        if [[ $(command -v apt-get) && "$_APT_PACKAGE" != "" ]]; then
+            echo "Try installing with 'apt-get install $_APT_PACKAGE'"
+        else 
+            if [[ $(command -v yum) && "$_YUM_PACKAGE" != "" ]]; then
+                echo "Try installing with 'yum install $_YUM_PACKAGE'"
+            fi
+        fi
+        exit 1
+    fi
+}
+
+# Check if we are using an old version of unshare
+check_unshare() {
+    UNSHARE_FORK=
+    if [[ "$(unshare --help | grep "\-\-fork")" != "" ]]; then
+        UNSHARE_FORK=1
+    fi
+    UNSHARE_PID=
+    if [[ "$(unshare --help | grep "\-\-pid")" != "" ]]; then
+        UNSHARE_PID=1
+    fi
+    UNSHARE_USER=
+    if [[ "$(unshare --help | grep "\-\-user")" != "" ]]; then
+        UNSHARE_USER=1
+    fi
+    UNSHARE_PROC=
+    if [[ "$(unshare --help | grep "\-\-mount\-proc")" != "" ]]; then
+        UNSHARE_PROC=1
+    fi
+}
+
+# Show an error and command line usage.
+show_error() {
+    _ERROR="Unknown error."
+    if [ "$1" != "" ]; then
+        _ERROR=$1
+    fi
+    echo "$BASENAME: $_ERROR"
+    show_help
+}
+
+# Show command line usage.
+show_usage() {
+    echo "Usage: $BASENAME [OPTION]... [COMMAND]"
+}
+
+# Show short help
+show_help() {
+    show_usage
+    echo "Try '$BASENAME --help' for more information."
+}
+
+check_arg_not_empty() {
+    _NAME=$1
+    _VALUE=$2
+
+    if [[ "$_VALUE" == "" ]]; then
+        show_error "$_NAME option requires an argument"
+        exit 1
+    fi
+}
+
+check_arg_number() {
+    _NAME=$1
+    _VALUE=$2
+    _RE='^[0-9]+$'
+    if [[ ! $_VALUE =~ $_RE ]]; then
+        show_error "$_VALUE: invalid $_NAME argument"
+        exit 1
+    fi
+}
+
+check_arg_bool() {
+    _NAME=$1
+    _VALUE=$2
+    _RE='^true|false$'
+    if [[ ! $_VALUE =~ $_RE ]]; then
+        show_error "$_VALUE: invalid $_NAME argument"
+        exit 1
+    fi
+}
+
+check_arg_path() {
+    _NAME=$1
+    _PATH=$2
+    if [[ ! -d $_PATH && ! -f $_PATH ]]; then
+        show_error "$_PATH: invalid $_NAME argument"
+        exit 1
+    fi
+}
+
+cleanup() {
+    # Delete the created cgroup
+    cgdelete -r -g $CGROUP:$UUID &> /dev/null || true
+
+    # TODO: Networking support
+    # Remove network interfaces
+	# ip link del dev veth0_"$NETID" &> /dev/null || true
+	# ip netns del netns_"$NETID" &> /dev/null || true
+
+    # Delete the temporary path.
+    if [[ "$TMPPATH" != "" ]]; then
+        # DON'T DELETE $ROOTFS BECAUSE IT COULD BE A REAL DIRECTORY
+        rm -rf $TMPPATH
+    fi
+}
+
+check_unshare
+
+# Show full help
+show_long_help() {
+    show_usage
+    echo "Execute COMMAND in a container. COMMAND is executed in it's"
+    echo "own set of namespaces and given a cgroup if limit options"
+    echo "are specified."
+    echo "Example: $BASENAME -c 100 -m 100000000 /bin/sh"
+    echo ""
+    echo "WARNING: This runtime is not stable and should not be used"
+    echo "in anything resembling a production environment."
+    echo "" 
+    echo "Cgroup options:"
+    echo " -c, --cpu=MILLICORES      CPU limit for the container in"
+    echo "                           number of milli-cores."
+    echo " -m, --memory=BYTES        Memory limit for the container"
+    echo "                           in bytes."
+    echo ""
+    echo "Namespace options:"
+    echo " --rootfs=PATH             Run the container with it's root set"
+    echo "                           to specified root filesystem path."
+    echo "                           If the specified path is a tar"
+    echo "                           archive, it will be unpacked to"
+    echo "                           a temporary directory and that"
+    echo "                           will be used as the root filesystem."
+    echo "                           Default: /"
+    echo " --mount=(true|false)      Run the container in its own mounts"
+    echo "                           namespace. Default: true"
+    if [[ "$UNSHARE_USER" != "" ]]; then
+        echo " --user=(true|false)       Run the container in its own user"
+        echo "                           namespace. Default: true"
+    fi
+    echo " --ipc=(true|false)        Run the container in its own IPC"
+    echo "                           namespace. Default: true"
+    if [[ "$UNSHARE_PID" != "" ]]; then
+        echo " --pid=(true|false)        Run the container in its own PID"
+        echo "                           namespace. Default: true"
+    fi
+    echo " --uts=(true|false)        Run the container in its own UTS"
+    echo "                           namespace. Default: true"
+    echo " --net=(true|false)        Run the container in its own network"
+    echo "                           namespace. Default: true"
+    echo ""
+}
+
+ROOTFS="/"
+MOUNTNS="true"
+USERNS="true"
+if [[ "$UNSHARE_USER" == "" ]]; then
+    USERNS="false"
+fi
+IPCNS="true"
+PIDNS="true"
+if [[ "$UNSHARE_PID" == "" ]]; then
+    PIDNS="false"
+fi
+UTSNS="true"
+NETNS="true"
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]
+do
+i="$1"
+case $i in
+    -h|--help)
+        show_long_help
+        exit 0
+        ;;
+    -c|--cpu)
+        CPU="$2"
+        check_arg_not_empty "cpu milli-cores" $CPU
+        check_arg_number "cpu milli-cores" $CPU
+        shift # past argument
+        shift # past value
+        ;;
+    -c=*|--cpu=*)
+        CPU="${i#*=}"
+        check_arg_not_empty "cpu milli-cores" $CPU
+        check_arg_number "cpu milli-cores" $CPU
+        shift # past argument=value
+        ;;
+    -m|--memory)
+        MEMORY="$2"
+        check_arg_not_empty "memory bytes" $MEMORY
+        check_arg_number "memory bytes" $MEMORY
+        shift # past argument
+        shift # past value
+        ;;
+    -m=*|--memory=*)
+        MEMORY="${i#*=}"
+        check_arg_not_empty "memory bytes" $MEMORY
+        check_arg_number "memory bytes" $MEMORY
+        shift # past argument=value
+        ;;
+    --rootfs)
+        ROOTFS="$2"
+        check_arg_not_empty "root filesystem" $ROOTFS
+        check_arg_path "root filesystem" $ROOTFS
+        shift # past argument
+        shift # past value
+        ;;
+    --rootfs=*)
+        ROOTFS="${i#*=}"
+        check_arg_not_empty "root filesystem" $ROOTFS
+        check_arg_path "root filesystem" $ROOTFS
+        shift # past argument=value
+        ;;
+    --mount)
+        MOUNTNS="$2"
+        check_arg_not_empty "mount namespace" $MOUNTNS
+        check_arg_bool "mount namespace" $MOUNTNS
+        shift # past argument
+        shift # past value
+        ;;
+    --mount=*)
+        MOUNTNS="${i#*=}"
+        check_arg_not_empty "mount namespace" $MOUNTNS
+        check_arg_bool "mount namespace" $MOUNTNS
+        shift # past argument=value
+        ;;
+    --user)
+        if [[ "$UNSHARE_USER" != "" ]]; then
+            USERNS="$2"
+            check_arg_not_empty "user namespace" $USERNS
+            check_arg_bool "user namespace" $USERNS
+            shift # past argument
+            shift # past value
+        else
+            show_error "unrecognized option '$1'"
+            exit 1
+        fi
+        ;;
+    --user=*)
+        if [[ "$UNSHARE_USER" != "" ]]; then
+            USERNS="${i#*=}"
+            check_arg_not_empty "user namespace" $USERNS
+            check_arg_bool "user namespace" $USERNS
+            shift # past argument=value
+        else
+            show_error "unrecognized option '$1'"
+            exit 1
+        fi
+        ;;
+    --ipc)
+        IPCNS="$2"
+        check_arg_not_empty "ipc namespace" $IPCNS
+        check_arg_bool "ipc namespace" $IPCNS
+        shift # past argument
+        shift # past value
+        ;;
+    --ipc=*)
+        IPCNS="${i#*=}"
+        check_arg_not_empty "ipc namespace" $IPCNS
+        check_arg_bool "ipc namespace" $IPCNS
+        shift # past argument=value
+        ;;
+    --pid)
+        if [[ "$UNSHARE_PID" != "" ]]; then
+            PIDNS="$2"
+            check_arg_not_empty "pid namespace" $PIDNS
+            check_arg_bool "pid namespace" $PIDNS
+            shift # past argument
+            shift # past value
+        else
+            show_error "unrecognized option '$1'"
+            exit 1
+        fi
+        ;;
+    --pid=*)
+        if [[ "$UNSHARE_PID" != "" ]]; then
+            PIDNS="${i#*=}"
+            check_arg_not_empty "pid namespace" $PIDNS
+            check_arg_bool "pid namespace" $PIDNS
+            shift # past argument=value
+        else
+            show_error "unrecognized option '$1'"
+            exit 1
+        fi
+        ;;
+    --uts)
+        UTSNS="$2"
+        check_arg_not_empty "uts namespace" $UTSNS
+        check_arg_bool "uts namespace" $UTSNS
+        shift # past argument
+        shift # past value
+        ;;
+    --uts=*)
+        UTSNS="${i#*=}"
+        check_arg_not_empty "uts namespace" $UTSNS
+        check_arg_bool "uts namespace" $UTSNS
+        shift # past argument=value
+        ;;
+    --net)
+        NETNS="$2"
+        check_arg_not_empty "net namespace" $NETNS
+        check_arg_bool "net namespace" $NETNS
+        shift # past argument
+        shift # past value
+        ;;
+    --net=*)
+        NETNS="${i#*=}"
+        check_arg_not_empty "net namespace" $NETNS
+        check_arg_bool "net namespace" $NETNS
+        shift # past argument=value
+        ;;
+    -*)
+        show_error "unrecognized option '$1'"
+        exit 1
+        ;;
+    *)
+        # unknown option
+        # If a positional argument is specified treat all remaining
+        # arguments as positional.
+        while [[ $# -gt 0 ]]
+        do
+            # Add all the rest of the arguments as positional arguments.
+            POSITIONAL+=("$1") # save it in an array for later
+            shift
+        done
+        ;;
+esac
+done
+
+set -- "${POSITIONAL[@]}" # restore positional parameters
+
+if [[ "$@" == "" ]]; then
+    show_error "$BASENAME requires at least 1 argument."    
+fi
+
+command_required "cgcreate" "cgroup-tools" "libcgroup-tools"
+command_required "cgexec" "cgroup-tools" "libcgroup-tools"
+command_required "cgdelete" "cgroup-tools" "libcgroup-tools"
+command_required "cgset" "cgroup-tools" "libcgroup-tools"
+command_required "chroot" "coreutils" ""
+command_required "unshare" "util-linux" "util-linux"
+command_required "uuidgen" "uuid-runtime" "util-linux"
+command_required "bc" "bc" "bc"
+
+CMD=$@
+
+# Extract the root fs if it exists.
+if [[ -f $ROOTFS ]]; then
+    TMPPATH=`mktemp -q -d`
+    tar -xf $ROOTFS -C $TMPPATH
+    ROOTFS=$TMPPATH
+fi
+
+UNSHARE_OPTS=""
+if [[ "$UNSHARE_FORK" != "" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --fork"
+fi
+
+if [[ $MOUNTNS == "true" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --mount"
+    if [[ "$UNSHARE_PROC" != "" ]]; then
+        # Use --mount-proc if it's supported.
+        UNSHARE_OPTS="$UNSHARE_OPTS --mount-proc"
+    fi
+
+    # If /bin/sh exists and /bin/mount exists, attempt to mount
+    # the proc filesystem manually.
+    if [[ -x $ROOTFS/bin/sh && -x $ROOTFS/bin/mount ]]; then
+        CMD="/bin/sh -c '/bin/mount -t proc proc /proc &> /dev/null || true && $CMD'"
+    fi
+fi
+if [[ $USERNS == "true" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --user --map-root-user"
+fi
+if [[ $IPCNS == "true" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --ipc"
+fi
+if [[ $PIDNS == "true" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --pid"
+fi
+if [[ $UTSNS == "true" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --uts"
+fi
+if [[ $NETNS == "true" ]]; then
+    UNSHARE_OPTS="$UNSHARE_OPTS --net"
+fi
+
+# Trap the cleanup function so that cgroups etc are deleted
+trap cleanup EXIT
+
+# Extract the root file system it was specified as a file.
+if [[ -f $ROOTFS ]]; then
+    TMPPATH=`mktemp -q -d`
+    tar -xf $ROOTFS -C $TMPPATH
+    ROOTFS=$TMPPATH
+fi
+
+# Generate a unique name for the cgroup
+UUID=`uuidgen`
+CGROUP="cpu,memory"
+
+# Create the cgroup
+cgcreate -a `whoami`:`id -g -n` -t `whoami`:`id -g -n` -g $CGROUP:$UUID
+
+if [[ "$MEMORY" != "" ]]; then
+    # Set the memory limit for the cgroup in bytes
+    cgset -r memory.limit_in_bytes=$MEMORY $UUID
+fi
+
+if [[ "$CPU" != "" ]]; then
+    # Set cfs_period_us and cfs_quota_us
+    # cfs_period_us specifies the enforcement period for CPU limiting
+    # cfs_quota_us specifies total time in microseconds that tasks can run in 1 period.
+    # cfs_period_us * number of cores = cfs_quota_us
+    # See: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/resource_management_guide/sec-cpu
+    # Just make the period 1s
+    PERIOD=1000000
+    # Set quota to CORES * PERIOD
+    # CPU is divided by 1000 because it's specified in millicores.
+    # Here we are using bc to do float arithmetic and using printf
+    # to convert back to an integer.
+    QUOTA=$(printf "%.0f" $(bc -l <<< "$CPU / 1000 * $PERIOD"))
+    cgset -r cpu.cfs_period_us=$PERIOD $UUID
+    cgset -r cpu.cfs_quota_us=$QUOTA $UUID
+fi
+
+# TODO: Networking support
+# Initialize networking
+# NETID=${UUID:0:8}
+# ip link add dev veth0_"$NETID" type veth peer name veth1_"$NETID"
+# ip link set dev veth0_"$NETID" up
+# ip link set veth0_"$NETID" master bridge0
+# ip netns add netns_"$NETID"
+# ip link set veth1_"$NETID" netns netns_"$NETID"
+# ip netns exec netns_"$NETID" ip link set dev lo up
+
+# # Assign an IP and MAC address
+# IP=$(shuf -i 2-254 -n 1)
+# MAC=${IP:-2:1}:${IP:-1:1}
+# ip netns exec netns_"$NETID" ip link set veth1_"$NETID" address 02:42:ac:11:00"$MAC"
+# ip netns exec netns_"$NETID" ip addr add 10.0.0."$IP"/24 dev veth1_"$NETID"
+# ip netns exec netns_"$NETID" ip link set dev veth1_"$NETID" up
+# ip netns exec netns_"$NETID" ip route add default via 10.0.0.1
+
+# Finally run the command to start the container.
+CMD="cgexec -g $CGROUP:$UUID \
+    unshare$UNSHARE_OPTS -- \
+    /bin/sh -c \"/bin/hostname $UUID && chroot $ROOTFS $CMD\""
+eval $CMD
