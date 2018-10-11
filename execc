@@ -386,7 +386,7 @@ command_required "bc" "bc" "bc"
 CMD=$@
 TMPPATH=""
 
-# Extract the root fs if it exists.
+# Extract the root fs if it's a file.
 if [[ -f $ROOTFS ]]; then
     TMPPATH=`mktemp -q -d`
     tar -xf $ROOTFS -C $TMPPATH
@@ -398,7 +398,8 @@ if [[ "$UNSHARE_FORK" != "" ]]; then
     UNSHARE_OPTS="$UNSHARE_OPTS --fork"
 fi
 
-if [[ $MOUNTNS == "true" ]]; then
+# Only mount /proc if using a mount namespace
+if [ "$MOUNTNS" == "true" ] && [ "$TMPPATH" != "" ]; then
     UNSHARE_OPTS="$UNSHARE_OPTS --mount"
     if [[ "$UNSHARE_PROC" != "" ]]; then
         # Use --mount-proc if it's supported.
