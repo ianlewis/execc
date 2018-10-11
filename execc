@@ -25,8 +25,6 @@
 
 BASENAME=`basename $0`
 
-set -e
-
 # Require a secific command. Give hints about what package to install.
 command_required() {
     _COMMAND=$1
@@ -188,6 +186,8 @@ show_long_help() {
 }
 
 ROOTFS="/"
+CPU=""
+MEMORY=""
 MOUNTNS="true"
 USERNS="true"
 if [[ "$UNSHARE_USER" == "" ]]; then
@@ -365,10 +365,13 @@ case $i in
 esac
 done
 
-set -- "${POSITIONAL[@]}" # restore positional parameters
+if [ -n "${POSITIONAL:-}" ]; then
+    set -- "${POSITIONAL[@]}" # restore positional parameters
+fi
 
 if [[ "$@" == "" ]]; then
     show_error "$BASENAME requires at least 1 argument."    
+    exit 1
 fi
 
 command_required "cgcreate" "cgroup-tools" "libcgroup-tools"
@@ -381,6 +384,7 @@ command_required "uuidgen" "uuid-runtime" "util-linux"
 command_required "bc" "bc" "bc"
 
 CMD=$@
+TMPPATH=""
 
 # Extract the root fs if it exists.
 if [[ -f $ROOTFS ]]; then
