@@ -23,14 +23,14 @@
 # A newer version of unshare that supports --fork, --user, --pid and --mount-proc
 # is recommended.
 
-BASENAME=`basename $0`
+BASENAME=$(basename "$0")
 
 # Require a secific command. Give hints about what package to install.
 command_required() {
     _COMMAND=$1
     _APT_PACKAGE=$2
     _YUM_PACKAGE=$3
-    if [ ! $(command -v $_COMMAND) ]; then
+    if [ ! "$(command -v "$_COMMAND")" ]; then
         echo "$_COMMAND is required."
         if [[ $(command -v apt-get) && "$_APT_PACKAGE" != "" ]]; then
             echo "Try installing with 'apt-get install $_APT_PACKAGE'"
@@ -46,19 +46,19 @@ command_required() {
 # Check if we are using an old version of unshare
 check_unshare() {
     UNSHARE_FORK=
-    if [[ "$(unshare --help | grep "\-\-fork")" != "" ]]; then
+    if [[ "$(unshare --help | grep "\\-\\-fork")" != "" ]]; then
         UNSHARE_FORK=1
     fi
     UNSHARE_PID=
-    if [[ "$(unshare --help | grep "\-\-pid")" != "" ]]; then
+    if [[ "$(unshare --help | grep "\\-\\-pid")" != "" ]]; then
         UNSHARE_PID=1
     fi
     UNSHARE_USER=
-    if [[ "$(unshare --help | grep "\-\-user")" != "" ]]; then
+    if [[ "$(unshare --help | grep "\\-\\-user")" != "" ]]; then
         UNSHARE_USER=1
     fi
     UNSHARE_PROC=
-    if [[ "$(unshare --help | grep "\-\-mount\-proc")" != "" ]]; then
+    if [[ "$(unshare --help | grep "\\-\\-mount\\-proc")" != "" ]]; then
         UNSHARE_PROC=1
     fi
 }
@@ -125,7 +125,7 @@ check_arg_path() {
 
 cleanup() {
     # Delete the created cgroup
-    cgdelete -r -g $CGROUP:$UUID &> /dev/null || true
+    cgdelete -r -g "$CGROUP":"$UUID" &> /dev/null || true
 
     # TODO: Networking support
     # Remove network interfaces
@@ -135,7 +135,7 @@ cleanup() {
     # Delete the temporary path.
     if [[ "$TMPPATH" != "" ]]; then
         # DON'T DELETE $ROOTFS BECAUSE IT COULD BE A REAL DIRECTORY
-        rm -rf $TMPPATH
+        rm -rf "$TMPPATH"
     fi
 }
 
@@ -212,61 +212,61 @@ case $i in
         ;;
     -c|--cpu)
         CPU="$2"
-        check_arg_not_empty "cpu milli-cores" $CPU
-        check_arg_number "cpu milli-cores" $CPU
+        check_arg_not_empty "cpu milli-cores" "$CPU"
+        check_arg_number "cpu milli-cores" "$CPU"
         shift # past argument
         shift # past value
         ;;
     -c=*|--cpu=*)
         CPU="${i#*=}"
-        check_arg_not_empty "cpu milli-cores" $CPU
-        check_arg_number "cpu milli-cores" $CPU
+        check_arg_not_empty "cpu milli-cores" "$CPU"
+        check_arg_number "cpu milli-cores" "$CPU"
         shift # past argument=value
         ;;
     -m|--memory)
         MEMORY="$2"
-        check_arg_not_empty "memory bytes" $MEMORY
-        check_arg_number "memory bytes" $MEMORY
+        check_arg_not_empty "memory bytes" "$MEMORY"
+        check_arg_number "memory bytes" "$MEMORY"
         shift # past argument
         shift # past value
         ;;
     -m=*|--memory=*)
         MEMORY="${i#*=}"
-        check_arg_not_empty "memory bytes" $MEMORY
-        check_arg_number "memory bytes" $MEMORY
+        check_arg_not_empty "memory bytes" "$MEMORY"
+        check_arg_number "memory bytes" "$MEMORY"
         shift # past argument=value
         ;;
     --rootfs)
         ROOTFS="$2"
-        check_arg_not_empty "root filesystem" $ROOTFS
-        check_arg_path "root filesystem" $ROOTFS
+        check_arg_not_empty "root filesystem" "$ROOTFS"
+        check_arg_path "root filesystem" "$ROOTFS"
         shift # past argument
         shift # past value
         ;;
     --rootfs=*)
         ROOTFS="${i#*=}"
-        check_arg_not_empty "root filesystem" $ROOTFS
-        check_arg_path "root filesystem" $ROOTFS
+        check_arg_not_empty "root filesystem" "$ROOTFS"
+        check_arg_path "root filesystem" "$ROOTFS"
         shift # past argument=value
         ;;
     --mount)
         MOUNTNS="$2"
-        check_arg_not_empty "mount namespace" $MOUNTNS
-        check_arg_bool "mount namespace" $MOUNTNS
+        check_arg_not_empty "mount namespace" "$MOUNTNS"
+        check_arg_bool "mount namespace" "$MOUNTNS"
         shift # past argument
         shift # past value
         ;;
     --mount=*)
         MOUNTNS="${i#*=}"
-        check_arg_not_empty "mount namespace" $MOUNTNS
-        check_arg_bool "mount namespace" $MOUNTNS
+        check_arg_not_empty "mount namespace" "$MOUNTNS"
+        check_arg_bool "mount namespace" "$MOUNTNS"
         shift # past argument=value
         ;;
     --user)
         if [[ "$UNSHARE_USER" != "" ]]; then
             USERNS="$2"
-            check_arg_not_empty "user namespace" $USERNS
-            check_arg_bool "user namespace" $USERNS
+            check_arg_not_empty "user namespace" "$USERNS"
+            check_arg_bool "user namespace" "$USERNS"
             shift # past argument
             shift # past value
         else
@@ -277,8 +277,8 @@ case $i in
     --user=*)
         if [[ "$UNSHARE_USER" != "" ]]; then
             USERNS="${i#*=}"
-            check_arg_not_empty "user namespace" $USERNS
-            check_arg_bool "user namespace" $USERNS
+            check_arg_not_empty "user namespace" "$USERNS"
+            check_arg_bool "user namespace" "$USERNS"
             shift # past argument=value
         else
             show_error "unrecognized option '$1'"
@@ -287,22 +287,22 @@ case $i in
         ;;
     --ipc)
         IPCNS="$2"
-        check_arg_not_empty "ipc namespace" $IPCNS
-        check_arg_bool "ipc namespace" $IPCNS
+        check_arg_not_empty "ipc namespace" "$IPCNS"
+        check_arg_bool "ipc namespace" "$IPCNS"
         shift # past argument
         shift # past value
         ;;
     --ipc=*)
         IPCNS="${i#*=}"
-        check_arg_not_empty "ipc namespace" $IPCNS
-        check_arg_bool "ipc namespace" $IPCNS
+        check_arg_not_empty "ipc namespace" "$IPCNS"
+        check_arg_bool "ipc namespace" "$IPCNS"
         shift # past argument=value
         ;;
     --pid)
         if [[ "$UNSHARE_PID" != "" ]]; then
             PIDNS="$2"
-            check_arg_not_empty "pid namespace" $PIDNS
-            check_arg_bool "pid namespace" $PIDNS
+            check_arg_not_empty "pid namespace" "$PIDNS"
+            check_arg_bool "pid namespace" "$PIDNS"
             shift # past argument
             shift # past value
         else
@@ -313,8 +313,8 @@ case $i in
     --pid=*)
         if [[ "$UNSHARE_PID" != "" ]]; then
             PIDNS="${i#*=}"
-            check_arg_not_empty "pid namespace" $PIDNS
-            check_arg_bool "pid namespace" $PIDNS
+            check_arg_not_empty "pid namespace" "$PIDNS"
+            check_arg_bool "pid namespace" "$PIDNS"
             shift # past argument=value
         else
             show_error "unrecognized option '$1'"
@@ -323,28 +323,28 @@ case $i in
         ;;
     --uts)
         UTSNS="$2"
-        check_arg_not_empty "uts namespace" $UTSNS
-        check_arg_bool "uts namespace" $UTSNS
+        check_arg_not_empty "uts namespace" "$UTSNS"
+        check_arg_bool "uts namespace" "$UTSNS"
         shift # past argument
         shift # past value
         ;;
     --uts=*)
         UTSNS="${i#*=}"
-        check_arg_not_empty "uts namespace" $UTSNS
-        check_arg_bool "uts namespace" $UTSNS
+        check_arg_not_empty "uts namespace" "$UTSNS"
+        check_arg_bool "uts namespace" "$UTSNS"
         shift # past argument=value
         ;;
     --net)
         NETNS="$2"
-        check_arg_not_empty "net namespace" $NETNS
-        check_arg_bool "net namespace" $NETNS
+        check_arg_not_empty "net namespace" "$NETNS"
+        check_arg_bool "net namespace" "$NETNS"
         shift # past argument
         shift # past value
         ;;
     --net=*)
         NETNS="${i#*=}"
-        check_arg_not_empty "net namespace" $NETNS
-        check_arg_bool "net namespace" $NETNS
+        check_arg_not_empty "net namespace" "$NETNS"
+        check_arg_bool "net namespace" "$NETNS"
         shift # past argument=value
         ;;
     -*)
@@ -369,7 +369,7 @@ if [ -n "${POSITIONAL:-}" ]; then
     set -- "${POSITIONAL[@]}" # restore positional parameters
 fi
 
-if [[ "$@" == "" ]]; then
+if [[ "$*" == "" ]]; then
     show_error "$BASENAME requires at least 1 argument."    
     exit 1
 fi
@@ -383,13 +383,13 @@ command_required "unshare" "util-linux" "util-linux"
 command_required "uuidgen" "uuid-runtime" "util-linux"
 command_required "bc" "bc" "bc"
 
-CMD=$@
+CMD=$*
 TMPPATH=""
 
 # Extract the root fs if it's a file.
 if [[ -f $ROOTFS ]]; then
-    TMPPATH=`mktemp -q -d`
-    tar -xf $ROOTFS -C $TMPPATH
+    TMPPATH=$(mktemp -q -d)
+    tar -xf "$ROOTFS" -C "$TMPPATH"
     ROOTFS=$TMPPATH
 fi
 
@@ -431,23 +431,16 @@ fi
 # Trap the cleanup function so that cgroups etc are deleted
 trap cleanup EXIT
 
-# Extract the root file system it was specified as a file.
-if [[ -f $ROOTFS ]]; then
-    TMPPATH=`mktemp -q -d`
-    tar -xf $ROOTFS -C $TMPPATH
-    ROOTFS=$TMPPATH
-fi
-
 # Generate a unique name for the cgroup
-UUID=`uuidgen`
+UUID=$(uuidgen)
 CGROUP="cpu,memory"
 
 # Create the cgroup
-cgcreate -a `whoami`:`id -g -n` -t `whoami`:`id -g -n` -g $CGROUP:$UUID
+cgcreate -a "$(whoami)":"$(id -g -n)" -t "$(whoami)":"$(id -g -n)" -g $CGROUP:"$UUID"
 
 if [[ "$MEMORY" != "" ]]; then
     # Set the memory limit for the cgroup in bytes
-    cgset -r memory.limit_in_bytes=$MEMORY $UUID
+    cgset -r memory.limit_in_bytes="$MEMORY" "$UUID"
 fi
 
 if [[ "$CPU" != "" ]]; then
@@ -462,9 +455,10 @@ if [[ "$CPU" != "" ]]; then
     # CPU is divided by 1000 because it's specified in millicores.
     # Here we are using bc to do float arithmetic and using printf
     # to convert back to an integer.
-    QUOTA=$(printf "%.0f" $(bc -l <<< "$CPU / 1000 * $PERIOD"))
-    cgset -r cpu.cfs_period_us=$PERIOD $UUID
-    cgset -r cpu.cfs_quota_us=$QUOTA $UUID
+    QUOTA=$(bc -l <<< "$CPU / 1000 * $PERIOD")
+    QUOTA=$(printf "%.0f" "$QUOTA")
+    cgset -r cpu.cfs_period_us=$PERIOD "$UUID"
+    cgset -r cpu.cfs_quota_us="$QUOTA" "$UUID"
 fi
 
 # TODO: Networking support
@@ -489,4 +483,4 @@ fi
 CMD="cgexec -g $CGROUP:$UUID \
     unshare$UNSHARE_OPTS -- \
     /bin/sh -c \"/bin/hostname $UUID && chroot $ROOTFS $CMD\""
-eval $CMD
+eval "$CMD"
